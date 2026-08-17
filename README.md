@@ -15,26 +15,10 @@ When you have a GitHub pull request with a Packit COPR build and a containerized
 
 ## Setup
 
-### Option 1: Clone this repo
-
 ```bash
 git clone https://github.com/jnagare-redhat/packit.git
 cd packit
-claude   # start Claude Code from this directory
-```
-
-### Option 2: Copy the skill into your existing project
-
-```bash
-mkdir -p /path/to/your/project/.claude/commands
-cp .claude/commands/apply-packit.md /path/to/your/project/.claude/commands/
-```
-
-### Option 3: Copy to your user-level commands (available in all projects)
-
-```bash
-mkdir -p ~/.claude/commands
-cp .claude/commands/apply-packit.md ~/.claude/commands/
+claude   # start Claude Code — /apply-packit is available immediately
 ```
 
 ### Prerequisites
