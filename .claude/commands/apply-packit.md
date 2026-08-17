@@ -290,10 +290,33 @@ Wait for foreman.service to reach `active` status by polling `systemctl is-activ
 
 ### Step 5: Verify
 
+#### 5a. Verify package installation
 - For host-level packages: `rpm -q <package_name>`
 - For container packages (dnf install): `podman exec foreman rpm -q <package_name>` to confirm, and `podman exec foreman ls <container_gem_path>` to confirm the volume mount
 - For container packages (overlay): `podman exec foreman ls <overlay_mount_path>/<changed_file>` to confirm the changed files are present
 - Report the installed NVR and where it was installed
+
+#### 5b. Verify all services are running
+
+Check that all critical services are active after the restart:
+
+```bash
+# Core services
+systemctl is-active foreman.service
+systemctl is-active dynflow-sidekiq@orchestrator.service
+systemctl is-active dynflow-sidekiq@worker.service
+systemctl is-active dynflow-sidekiq@worker-hosts-queue.service
+
+# Check foreman-db-migrate completed successfully (oneshot — should be inactive/dead with success)
+systemctl is-failed foreman-db-migrate.service  # should return "inactive", NOT "failed"
+
+# Verify foreman container is healthy — hit the ping API
+curl -sk https://localhost/api/v2/ping | python3 -m json.tool
+```
+
+If any service is not active, report the failure and show `systemctl status <service>` and `journalctl -u <service> --no-pager -n 50` for the failed service.
+
+The `/api/v2/ping` response shows the status of all backend services (database, Pulp, Candlepin, etc.). Report any service that is not "ok".
 
 ### Step 6: Report results
 
