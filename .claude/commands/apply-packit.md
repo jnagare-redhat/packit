@@ -3,18 +3,126 @@
 Apply a Packit COPR build from a GitHub PR to a containerized Foreman/Satellite host.
 
 ## Arguments
-- `$ARGUMENTS` — space-separated: `<PR_URL> <HOST>`
+- `$ARGUMENTS` — space-separated: `[--rollback] <PR_URL> <HOST>`
+  - Apply: `/apply-packit <PR_URL> <HOST>`
+  - Rollback: `/apply-packit --rollback <PR_URL> <HOST>`
+  - List applied: `/apply-packit --list <HOST>`
   Example: `https://github.com/theforeman/foreman_rh_cloud/pull/1214 ip-10-0-199-88.example.com`
 
 ## Instructions
 
 When this skill is invoked, follow these steps precisely:
 
-### Step 0: Parse inputs and ask for credentials
+### Step 0: Parse inputs, detect mode, and ask for credentials
 
-1. Parse `$ARGUMENTS` to extract the PR URL and host. If either is missing, ask the user.
-2. From the PR URL, extract `<org>` (e.g. `theforeman` or `Katello`), `<repo>` (e.g. `foreman_rh_cloud`), and `<pr_number>`.
-3. **Ask the user for the SSH password** for the remote host using AskUserQuestion. Never hardcode passwords.
+1. Parse `$ARGUMENTS` for flags and positional args:
+   - If `--rollback` is present → go to **Rollback Mode** (see below)
+   - If `--list` is present → go to **List Mode** (see below)
+   - Otherwise → continue with **Apply Mode** (Step 1 onward)
+2. Extract the PR URL and host. If either is missing, ask the user.
+3. From the PR URL, extract `<org>` (e.g. `theforeman` or `Katello`), `<repo>` (e.g. `foreman_rh_cloud`), and `<pr_number>`.
+4. **Ask the user for the SSH password** for the remote host using AskUserQuestion. Never hardcode passwords.
+
+---
+
+## List Mode (`--list`)
+
+When `--list <HOST>` is passed, show all currently applied Packit PRs on the host:
+
+1. Ask the user for the SSH password.
+2. SSH to the host and discover applied PRs:
+
+```bash
+# Find host-level Packit COPR repos
+dnf copr list 2>/dev/null | grep packit
+
+# Find container-level volume-mount overrides
+ls /etc/containers/systemd/foreman.container.d/*.conf 2>/dev/null
+
+# Find persisted gem directories
+ls -d /opt/*-pr*/ 2>/dev/null
+```
+
+3. For each discovered PR, report:
+   - PR identifier (repo + PR number)
+   - Package name and NVR (from `rpm -q` for host packages, or from the override conf/directory name for container packages)
+   - Install type (host, hammer, or container volume-mount)
+
+---
+
+## Rollback Mode (`--rollback`)
+
+When `--rollback <PR_URL> <HOST>` is passed, undo a previously applied Packit PR:
+
+### Step R0: Parse and classify
+
+1. Extract `<org>`, `<repo>`, `<pr_number>` from the PR URL.
+2. Ask the user for the SSH password.
+3. Determine the package type (same classification as Step 2 in Apply Mode):
+   - Host-level / Hammer CLI → go to **Step R1**
+   - Foreman container (volume-mount) → go to **Step R2**
+
+### Step R1: Rollback host-level or hammer packages
+
+```bash
+# Find the currently installed Packit NVR
+CURRENT=$(rpm -q <package_name>)
+
+# Find what version to downgrade to — query the base repo for the non-Packit version
+# The base version is typically the one from the Satellite repo without "pr<number>" in the release
+dnf list available --disablerepo='copr:*' <package_name> 2>/dev/null
+
+# Downgrade to the base version
+dnf downgrade -y <package_name>
+
+# Remove the COPR repo
+dnf copr remove -y packit/<org>-<repo>-<pr_number>
+```
+
+Verify with: `rpm -q <package_name>` — confirm it no longer contains `pr<number>` in the release.
+
+### Step R2: Rollback foreman container packages (volume-mount)
+
+```bash
+# Remove all Quadlet drop-in override files for this PR
+for dir in /etc/containers/systemd/*.container.d; do
+  rm -f "$dir/<repo>-pr<pr_number>.conf"
+done
+
+# Remove the persisted files
+rm -rf /opt/<repo>-pr<pr_number>/
+
+# Remove any leftover COPR repo file inside the container (if it exists)
+podman exec --user 0 foreman rm -f /etc/yum.repos.d/packit-<repo>-pr<pr_number>.repo 2>/dev/null
+
+# Reload systemd and restart all affected services
+systemctl daemon-reload
+systemctl restart foreman-db-migrate.service
+# Wait for foreman-db-migrate to finish
+systemctl restart foreman.service
+# Wait for foreman to become active
+systemctl restart dynflow-sidekiq@orchestrator.service dynflow-sidekiq@worker.service dynflow-sidekiq@worker-hosts-queue.service
+```
+
+Wait for `foreman.service` to reach `active` status by polling `systemctl is-active foreman.service`.
+
+### Step R3: Verify rollback
+
+- For host-level packages: `rpm -q <package_name>` — confirm the base version is restored
+- For container packages: `podman exec foreman ls <gem_path>` — confirm the original gem is back (no overlay)
+- Confirm no override conf files remain: `ls /etc/containers/systemd/foreman.container.d/*<pr_number>* 2>/dev/null` should return nothing
+- Confirm persisted directory is gone: `ls /opt/<repo>-pr<pr_number>/ 2>/dev/null` should return nothing
+
+### Step R4: Report rollback results
+
+Summarize:
+- PR that was rolled back
+- Package name and what version it was restored to
+- Services that were restarted
+
+---
+
+## Apply Mode
 
 ### Step 1: Determine the COPR repo and RPM package name
 

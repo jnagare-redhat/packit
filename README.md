@@ -51,35 +51,42 @@ cp .claude/commands/apply-packit.md ~/.claude/commands/
 
 ## Usage
 
-In Claude Code, run:
+The skill will prompt you for the SSH root password before connecting.
+
+### Apply a PR
 
 ```
 /apply-packit <GITHUB_PR_URL> <HOSTNAME>
 ```
 
-### Examples
-
-**Apply a Foreman plugin PR:**
+Examples:
 ```
 /apply-packit https://github.com/theforeman/foreman_rh_cloud/pull/1214 satellite.example.com
-```
-
-**Apply a Katello PR:**
-```
 /apply-packit https://github.com/Katello/katello/pull/11822 satellite.example.com
-```
-
-**Apply a Hammer CLI PR:**
-```
 /apply-packit https://github.com/Katello/hammer-cli-katello/pull/1033 satellite.example.com
-```
-
-**Apply a host-level package PR:**
-```
 /apply-packit https://github.com/theforeman/foremanctl/pull/569 satellite.example.com
 ```
 
-The skill will prompt you for the SSH root password before connecting.
+### List applied PRs
+
+```
+/apply-packit --list <HOSTNAME>
+```
+
+Shows all currently applied Packit PRs on the host, including:
+- Host-level COPR repos (from `dnf copr list`)
+- Container volume-mount overrides (drop-in `.conf` files)
+- Persisted gem directories under `/opt/`
+
+### Rollback a PR
+
+```
+/apply-packit --rollback <GITHUB_PR_URL> <HOSTNAME>
+```
+
+Undoes a previously applied PR:
+- **Host-level/Hammer packages:** downgrades to the base version and removes the COPR repo
+- **Container packages:** removes drop-in override files, deletes persisted files from `/opt/`, and restarts all affected services to restore the original container image state
 
 ## How it works
 
@@ -133,7 +140,13 @@ The skill will ask about companion PRs when it detects new API fields.
 
 ## Rollback
 
-The skill prints rollback instructions after every install. In general:
+Use the `--rollback` flag to undo a previously applied PR:
+
+```
+/apply-packit --rollback <GITHUB_PR_URL> <HOSTNAME>
+```
+
+This automatically handles the full rollback — removing COPR repos, drop-in overrides, persisted files, and restarting services. The skill also prints manual rollback instructions after every apply, in case you need to rollback without the skill:
 
 **Host-level packages:**
 ```bash
